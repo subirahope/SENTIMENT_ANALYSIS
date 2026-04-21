@@ -40,6 +40,33 @@ def load_nltk():
             nltk.download('punkt_tab', quiet=True)
         _nltk_loaded = True
     return nltk
+#=============================================================================
+# Add this to your app.py right after loading the data
+
+st.subheader("Data Diagnostic - Why 100% Accuracy?")
+
+# 1. Check for duplicates
+duplicates = df_binary.duplicated(subset=['Review_Text']).sum()
+st.write(f"**Duplicate reviews:** {duplicates}")
+
+# 2. Check if sentiment appears in text
+contains_label = df_binary['Review_Text'].str.lower().str.contains('positive|negative|neutral').sum()
+st.write(f"**Reviews containing sentiment words:** {contains_label}")
+
+# 3. Show sample of training vs test overlap risk
+st.write("**Sample reviews from dataset:**")
+for i, row in df_binary.head(5).iterrows():
+    st.write(f"Text: {row['Review_Text'][:100]}...")
+    st.write(f"Label: {row['Sentiment_Label']}")
+    st.write("---")
+
+# 4. Check if Star_Rating perfectly predicts sentiment (if column exists)
+if 'Star_Rating' in df.columns:
+    rating_sentiment = df.groupby('Star_Rating')['Sentiment_Label'].value_counts()
+    st.write("**Star Rating vs Sentiment:**")
+    st.dataframe(rating_sentiment)
+
+#=============================================================================
 
 # ============================================================================
 # TEXT PREPROCESSOR CLASS (UPDATED FOR KENYAN DATASET)
