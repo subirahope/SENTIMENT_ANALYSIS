@@ -897,16 +897,22 @@ elif page == "Analytics":
         st.info("No data loaded. Please go to Model Training page to load and analyze data.")
 
 # ============================================================================
-# DATASET EXPLORER PAGE
+# DATASET EXPLORER PAGE (FIXED)
 # ============================================================================
 
 elif page == "Dataset Explorer":
     st.header("Dataset Explorer")
     
-    if st.session_state.data_loaded:
-        df_full = pd.read_excel('KE_Retail_Sentiment_Dataset.xlsx', sheet_name='Raw_Dataset') if st.session_state.df is not None else None
+    if st.session_state.data_loaded and st.session_state.df is not None:
         
-        if df_full is not None:
+        # Get the full original data (before binary conversion)
+        # We need to reload from the uploaded file or store the full dataframe
+        if 'full_df' not in st.session_state:
+            st.warning("Full dataset not available. Please upload the Excel file again in Model Training page.")
+            st.info("Note: The Dataset Explorer requires the original Excel file to show all columns.")
+        else:
+            df_full = st.session_state.full_df
+            
             st.subheader("Full Dataset Overview")
             st.dataframe(df_full.head(20), use_container_width=True)
             
@@ -928,11 +934,14 @@ elif page == "Dataset Explorer":
             
             col1, col2, col3 = st.columns(3)
             with col1:
-                retailer_filter = st.selectbox("Select Retailer", ["All"] + list(df_full['Retailer'].unique()))
+                retailer_options = ["All"] + sorted(df_full['Retailer'].unique().tolist())
+                retailer_filter = st.selectbox("Select Retailer", retailer_options)
             with col2:
-                sentiment_filter = st.selectbox("Select Sentiment", ["All", "Positive", "Neutral", "Negative"])
+                sentiment_options = ["All"] + sorted(df_full['Sentiment_Label'].unique().tolist())
+                sentiment_filter = st.selectbox("Select Sentiment", sentiment_options)
             with col3:
-                lang_filter = st.selectbox("Select Language Mix", ["All"] + list(df_full['Language_Mix'].unique()))
+                lang_options = ["All"] + sorted(df_full['Language_Mix'].unique().tolist())
+                lang_filter = st.selectbox("Select Language Mix", lang_options)
             
             filtered_df = df_full.copy()
             if retailer_filter != "All":
@@ -943,11 +952,14 @@ elif page == "Dataset Explorer":
                 filtered_df = filtered_df[filtered_df['Language_Mix'] == lang_filter]
             
             st.write(f"Showing {len(filtered_df)} reviews")
-            st.dataframe(filtered_df[['Review_ID', 'Review_Date', 'Retailer', 'Product_Category', 'Star_Rating', 'Sentiment_Label', 'Language_Mix', 'Review_Text']].head(20), use_container_width=True)
-        else:
-            st.info("Full dataset not available. Please ensure the Excel file is accessible.")
+            
+            # Select columns to display
+            display_cols = ['Review_ID', 'Review_Date', 'Retailer', 'Product_Category', 
+                           'Star_Rating', 'Sentiment_Label', 'Language_Mix', 'Code_Switch_Detected', 'Review_Text']
+            available_cols = [col for col in display_cols if col in filtered_df.columns]
+            st.dataframe(filtered_df[available_cols].head(20), use_container_width=True)
     else:
-        st.info("No data loaded. Please go to Model Training page first.")
+        st.info("No data loaded. Please go to Model Training page and upload your Excel file first.")
 
 # ============================================================================
 # ABOUT PAGE
