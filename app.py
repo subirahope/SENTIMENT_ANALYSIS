@@ -40,33 +40,6 @@ def load_nltk():
             nltk.download('punkt_tab', quiet=True)
         _nltk_loaded = True
     return nltk
-#=============================================================================
-# Add this to your app.py right after loading the data
-
-st.subheader("Data Diagnostic - Why 100% Accuracy?")
-
-# 1. Check for duplicates
-duplicates = df_binary.duplicated(subset=['Review_Text']).sum()
-st.write(f"**Duplicate reviews:** {duplicates}")
-
-# 2. Check if sentiment appears in text
-contains_label = df_binary['Review_Text'].str.lower().str.contains('positive|negative|neutral').sum()
-st.write(f"**Reviews containing sentiment words:** {contains_label}")
-
-# 3. Show sample of training vs test overlap risk
-st.write("**Sample reviews from dataset:**")
-for i, row in df_binary.head(5).iterrows():
-    st.write(f"Text: {row['Review_Text'][:100]}...")
-    st.write(f"Label: {row['Sentiment_Label']}")
-    st.write("---")
-
-# 4. Check if Star_Rating perfectly predicts sentiment (if column exists)
-if 'Star_Rating' in df.columns:
-    rating_sentiment = df.groupby('Star_Rating')['Sentiment_Label'].value_counts()
-    st.write("**Star Rating vs Sentiment:**")
-    st.dataframe(rating_sentiment)
-
-#=============================================================================
 
 # ============================================================================
 # TEXT PREPROCESSOR CLASS (UPDATED FOR KENYAN DATASET)
@@ -623,7 +596,7 @@ if page == "Dashboard":
         st.info("No data loaded. Please go to Model Training page and upload your dataset.")
 
 # ============================================================================
-# MODEL TRAINING PAGE
+# MODEL TRAINING PAGE (WITH DIAGNOSTIC)
 # ============================================================================
 
 elif page == "Model Training":
@@ -639,15 +612,17 @@ elif page == "Model Training":
     if uploaded_file is not None:
         try:
             if uploaded_file.name.endswith('.xlsx'):
-                df = pd.read_excel(uploaded_file, sheet_name='Raw_Dataset')
+                df_full = pd.read_excel(uploaded_file, sheet_name='Raw_Dataset')
+                st.session_state.full_df = df_full
             else:
-                df = pd.read_csv(uploaded_file)
+                df_full = pd.read_csv(uploaded_file)
+                st.session_state.full_df = df_full
             
             # Check for required columns
-            if 'Review_Text' in df.columns and 'Sentiment_Label' in df.columns:
+            if 'Review_Text' in df_full.columns and 'Sentiment_Label' in df_full.columns:
                 
                 # Keep only relevant columns and drop nulls
-                df = df[['Review_Text', 'Sentiment_Label']].dropna()
+                df = df_full[['Review_Text', 'Sentiment_Label']].dropna()
                 
                 # Map sentiment labels to numeric (for binary classification, we'll focus on Positive vs Negative)
                 # For Neutral, we'll handle separately
@@ -674,6 +649,93 @@ elif page == "Model Training":
                     st.metric("Positive", len(df_binary[df_binary['Sentiment_Label'] == 'Positive']))
                 with col3:
                     st.metric("Negative", len(df_binary[df_binary['Sentiment_Label'] == 'Negative']))
+                
+                # ============================================================
+                # DATA DIAGNOSTIC - TO EXPLAIN 100% ACCURACY IF IT OCCURS
+                # ============================================================
+                st.markdown("---")
+                st.subheader("Data Diagnostic")
+                
+                # 1. Check for duplicate reviews
+                duplicates = df_binary.duplicated(subset=['Review_Text']).sum()
+                if duplicates > 0:
+                    st.warning(f"**Duplicate reviews found:** {duplicates} duplicate reviews in dataset")
+                    st.write("Duplicates can cause data leakage between train and test sets.")
+                else:
+                    st.success(f"**Duplicate reviews:** {duplicates} - No duplicates found")
+                
+                # 2. Check if sentiment words appear in text (potential data leakage)
+                sentiment_keywords = ['positive', 'negative', 'good', 'bad', 'excellent', 'terrible', 
+                                      'great', 'poor', 'amazing', 'horrible', 'awesome', 'awful',
+                                      'nzuri', 'mbaya', 'poa', 'kali', 'safi', 'bomba', 'fala']
+                
+                contains_keywords = df_binary['Review_Text'].str.lower().str.contains('|'.join(sentiment_keywords)).sum()
+                if contains_keywords > 0:
+                    st.warning(f"**Reviews containing sentiment keywords:** {contains_keywords} out of {len(df_binary)}")
+                    st.write("If the label appears in the text, the model may be memorizing rather than learning.")
+                else:
+                    st.success(f"**Reviews containing sentiment keywords:** {contains_keywords} - No obvious leakage")
+                
+                # 3. Check class balance
+                pos_count = len(df_binary[df_binary['Sentiment_Label'] == 'Positive'])
+                neg_count = len(df_binary[df_binary['Sentiment_Label'] == 'Negative'])
+                imbalance_ratio = abs(pos_count - neg_count) / len(df_binary)
+                
+                st.write(f"**Class distribution:** Positive = {pos_count}, Negative = {neg_count}")
+                if imbalance_ratio < 0.1:
+                    st.success(f"Classes are well balanced (imbalance ratio: {imbalance_ratio:.3f})")
+                else:
+                    st.warning(f"Classes are imbalanced (imbalance ratio: {imbalance_ratio:.3f}) - Use stratify during train-test split")
+                
+                # 4. Show sample reviews
+                st.write("**Sample reviews from dataset:**")
+                for i, row in df_binary.head(5).iterrows():
+                    st.write(f"- Text: {row['Review_Text'][:150]}...")
+                    st.write(f"  Label: {row['Sentiment_Label']}")
+                    st.write("")
+                
+                # 5. Check Star Rating vs Sentiment relationship (if available)
+                if 'Star_Rating' in df_full.columns:
+                    st.write("**Star Rating vs Sentiment Analysis:**")
+                    rating_sentiment = df_full.groupby('Star_Rating')['Sentiment_Label'].value_counts().unstack().fillna(0)
+                    st.dataframe(rating_sentiment)
+                    
+                    # Check if rating perfectly predicts sentiment (synthetic data issue)
+                    perfect_prediction = True
+                    if 1 in rating_sentiment.index and rating_sentiment.loc[1, 'Positive'] > 0:
+                        perfect_prediction = False
+                    if 2 in rating_sentiment.index and rating_sentiment.loc[2, 'Positive'] > 0:
+                        perfect_prediction = False
+                    if 4 in rating_sentiment.index and rating_sentiment.loc[4, 'Negative'] > 0:
+                        perfect_prediction = False
+                    if 5 in rating_sentiment.index and rating_sentiment.loc[5, 'Negative'] > 0:
+                        perfect_prediction = False
+                    
+                    if perfect_prediction:
+                        st.error("**CRITICAL ISSUE DETECTED:** Star ratings perfectly predict sentiment!")
+                        st.write("This indicates the synthetic data is too perfect. In real data, some 4-star reviews would be negative and some 2-star reviews would be positive.")
+                    else:
+                        st.success("Star ratings do not perfectly predict sentiment - this is realistic.")
+                
+                # 6. Check text length distribution
+                text_lengths = df_binary['Review_Text'].str.split().str.len()
+                st.write(f"**Text length statistics:**")
+                st.write(f"- Minimum length: {text_lengths.min()} words")
+                st.write(f"- Maximum length: {text_lengths.max()} words")
+                st.write(f"- Average length: {text_lengths.mean():.1f} words")
+                
+                # 7. Check for identical or near-identical texts
+                if duplicates > 0:
+                    duplicate_texts = df_binary[df_binary.duplicated(subset=['Review_Text'], keep=False)]
+                    st.write(f"**Duplicate examples:**")
+                    for text in duplicate_texts['Review_Text'].unique()[:3]:
+                        st.write(f"  - {text[:100]}...")
+                
+                st.info("**Diagnostic Summary:** If you see 100% accuracy, the most likely causes are (1) duplicate reviews, (2) sentiment keywords in the text, or (3) synthetic data being too perfectly separable. The diagnostic above will help identify the issue.")
+                # ============================================================
+                # END OF DIAGNOSTIC CODE
+                # ============================================================
+                
             else:
                 st.error("Excel file must contain 'Review_Text' and 'Sentiment_Label' columns")
                 
@@ -690,6 +752,10 @@ elif page == "Model Training":
         with col2:
             test_size = st.slider("Test Set Size (%)", 10, 40, 20) / 100
         
+        # Add option for cross-validation
+        use_cv = st.checkbox("Use Cross-Validation (5-fold)", value=False, 
+                            help="Cross-validation provides more reliable performance estimates")
+        
         if st.button("Train Model", use_container_width=True):
             with st.spinner("Training model... Please wait."):
                 
@@ -703,68 +769,130 @@ elif page == "Model Training":
                     processed_texts = preprocessor.batch_preprocess(texts)
                 
                 with st.spinner("Vectorizing text..."):
-                    vectorizer = TfidfVectorizer(max_features=3000, ngram_range=(1, 2))
+                    # Use more conservative parameters to prevent overfitting
+                    vectorizer = TfidfVectorizer(
+                        max_features=2000,  # Reduced from 3000
+                        ngram_range=(1, 2),
+                        min_df=2,
+                        max_df=0.9
+                    )
                     X = vectorizer.fit_transform(processed_texts)
                     y = st.session_state.df['label_encoded'].values
                 
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X, y, test_size=test_size, random_state=42
-                )
-                
-                results = {}
-                
-                if model_type in ["Naive Bayes", "Both"]:
-                    with st.spinner("Training Naive Bayes..."):
-                        nb = MultinomialNB()
-                        nb.fit(X_train, y_train)
-                        y_pred = nb.predict(X_test)
+                if use_cv:
+                    # Use cross-validation for more reliable evaluation
+                    from sklearn.model_selection import cross_val_score, StratifiedKFold
+                    
+                    st.write("**Using 5-Fold Stratified Cross-Validation**")
+                    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+                    
+                    results = {}
+                    
+                    if model_type in ["Naive Bayes", "Both"]:
+                        nb = MultinomialNB(alpha=1.0)
+                        cv_scores = cross_val_score(nb, X, y, cv=cv, scoring='accuracy')
                         results['Naive Bayes'] = {
-                            'accuracy': accuracy_score(y_test, y_pred),
-                            'precision': precision_score(y_test, y_pred, zero_division=0),
-                            'recall': recall_score(y_test, y_pred, zero_division=0),
-                            'f1': f1_score(y_test, y_pred, zero_division=0),
-                            'model': nb
+                            'accuracy': cv_scores.mean(),
+                            'accuracy_std': cv_scores.std(),
+                            'cv_scores': cv_scores,
+                            'model': nb.fit(X, y)
                         }
-                
-                if model_type in ["SVM", "Both"]:
-                    with st.spinner("Training SVM..."):
-                        svm = SVC(kernel='linear', probability=True, random_state=42)
-                        svm.fit(X_train, y_train)
-                        y_pred = svm.predict(X_test)
+                        st.write(f"**Naive Bayes CV Accuracy:** {cv_scores.mean():.4f} (+/- {cv_scores.std():.4f})")
+                    
+                    if model_type in ["SVM", "Both"]:
+                        svm = SVC(kernel='linear', C=0.1, probability=True, random_state=42)
+                        cv_scores = cross_val_score(svm, X, y, cv=cv, scoring='accuracy')
                         results['SVM'] = {
-                            'accuracy': accuracy_score(y_test, y_pred),
-                            'precision': precision_score(y_test, y_pred, zero_division=0),
-                            'recall': recall_score(y_test, y_pred, zero_division=0),
-                            'f1': f1_score(y_test, y_pred, zero_division=0),
-                            'model': svm
+                            'accuracy': cv_scores.mean(),
+                            'accuracy_std': cv_scores.std(),
+                            'cv_scores': cv_scores,
+                            'model': svm.fit(X, y)
                         }
+                        st.write(f"**SVM CV Accuracy:** {cv_scores.mean():.4f} (+/- {cv_scores.std():.4f})")
+                    
+                    best_model = max(results, key=lambda x: results[x]['accuracy'])
+                    st.session_state.model = results[best_model]['model']
+                    st.session_state.vectorizer = vectorizer
+                    
+                    st.success(f"Training complete! Best model: {best_model}")
+                    st.metric("Cross-Validation Accuracy", f"{results[best_model]['accuracy']:.4f}")
+                    st.write(f"Standard Deviation: {results[best_model]['accuracy_std']:.4f}")
+                    
+                    # Show per-fold results
+                    if 'cv_scores' in results[best_model]:
+                        st.write("**Per-fold accuracies:**")
+                        for i, score in enumerate(results[best_model]['cv_scores']):
+                            st.write(f"  Fold {i+1}: {score:.4f}")
+                    
+                else:
+                    # Use single train-test split
+                    X_train, X_test, y_train, y_test = train_test_split(
+                        X, y, test_size=test_size, random_state=42, stratify=y
+                    )
+                    
+                    results = {}
+                    
+                    if model_type in ["Naive Bayes", "Both"]:
+                        with st.spinner("Training Naive Bayes..."):
+                            nb = MultinomialNB(alpha=1.0)
+                            nb.fit(X_train, y_train)
+                            y_pred = nb.predict(X_test)
+                            results['Naive Bayes'] = {
+                                'accuracy': accuracy_score(y_test, y_pred),
+                                'precision': precision_score(y_test, y_pred, zero_division=0),
+                                'recall': recall_score(y_test, y_pred, zero_division=0),
+                                'f1': f1_score(y_test, y_pred, zero_division=0),
+                                'model': nb
+                            }
+                    
+                    if model_type in ["SVM", "Both"]:
+                        with st.spinner("Training SVM..."):
+                            svm = SVC(kernel='linear', C=0.1, probability=True, random_state=42)
+                            svm.fit(X_train, y_train)
+                            y_pred = svm.predict(X_test)
+                            results['SVM'] = {
+                                'accuracy': accuracy_score(y_test, y_pred),
+                                'precision': precision_score(y_test, y_pred, zero_division=0),
+                                'recall': recall_score(y_test, y_pred, zero_division=0),
+                                'f1': f1_score(y_test, y_pred, zero_division=0),
+                                'model': svm
+                            }
+                    
+                    best_model = max(results, key=lambda x: results[x]['accuracy'])
+                    st.session_state.model = results[best_model]['model']
+                    st.session_state.vectorizer = vectorizer
+                    
+                    st.success(f"Training complete! Best model: {best_model}")
+                    st.metric("Test Accuracy", f"{results[best_model]['accuracy']:.4f}")
+                    
+                    # Warning if accuracy is suspiciously high
+                    if results[best_model]['accuracy'] > 0.95:
+                        st.warning("⚠️ **Suspiciously high accuracy detected!**")
+                        st.write("This may indicate:")
+                        st.write("- Data leakage (sentiment words in the text)")
+                        st.write("- Duplicate reviews between train and test sets")
+                        st.write("- Synthetic data that is too perfectly separable")
+                        st.write("Check the Data Diagnostic section above for more information.")
+                    
+                    model_scores = {name: {k: v for k, v in m.items() if k != 'model'} 
+                                   for name, m in results.items()}
+                    st.plotly_chart(create_model_comparison_chart(model_scores), use_container_width=True)
+                    
+                    st.subheader("Detailed Metrics")
+                    for name, m in results.items():
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric(f"{name} - Accuracy", f"{m['accuracy']:.3f}")
+                        with col2:
+                            st.metric(f"{name} - Precision", f"{m['precision']:.3f}")
+                        with col3:
+                            st.metric(f"{name} - Recall", f"{m['recall']:.3f}")
+                        with col4:
+                            st.metric(f"{name} - F1 Score", f"{m['f1']:.3f}")
                 
-                best_model = max(results, key=lambda x: results[x]['accuracy'])
-                st.session_state.model = results[best_model]['model']
-                st.session_state.vectorizer = vectorizer
-                
+                # Save models
                 joblib.dump(st.session_state.model, 'sentiment_model.pkl')
                 joblib.dump(st.session_state.vectorizer, 'vectorizer.pkl')
-                
-                st.success(f"Training complete! Best model: {best_model}")
-                st.metric("Accuracy", f"{results[best_model]['accuracy']:.4f}")
-                
-                model_scores = {name: {k: v for k, v in m.items() if k != 'model'} 
-                               for name, m in results.items()}
-                st.plotly_chart(create_model_comparison_chart(model_scores), use_container_width=True)
-                
-                st.subheader("Detailed Metrics")
-                for name, m in results.items():
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric(f"{name} - Accuracy", f"{m['accuracy']:.3f}")
-                    with col2:
-                        st.metric(f"{name} - Precision", f"{m['precision']:.3f}")
-                    with col3:
-                        st.metric(f"{name} - Recall", f"{m['recall']:.3f}")
-                    with col4:
-                        st.metric(f"{name} - F1 Score", f"{m['f1']:.3f}")
-
 # ============================================================================
 # REAL-TIME ANALYSIS PAGE
 # ============================================================================
