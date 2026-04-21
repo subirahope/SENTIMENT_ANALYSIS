@@ -1232,7 +1232,7 @@ else:
 st.markdown("---")
 st.markdown(
     "<div style='text-align: center; color: #6c757d; padding: 1rem;'>"
-    "(c) 2026 - Kenyan Retail Sentiment Analysis System | JKUAT"
+    "© 2026 - Kenyan Retail Sentiment Analysis System"
     "</div>",
     unsafe_allow_html=True
 )
