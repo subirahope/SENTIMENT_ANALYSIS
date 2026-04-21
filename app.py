@@ -1,6 +1,6 @@
 """
 Automated Text Mining Solution for Real-Time Sentiment Analysis
-Fixed Dashboard Design - Better Visibility
+Optimized Streamlit Dashboard - Compatible with KE_Retail_Sentiment_Dataset.xlsx
 """
 
 import streamlit as st
@@ -18,6 +18,7 @@ import joblib
 from collections import Counter
 from wordcloud import WordCloud
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 warnings.filterwarnings('ignore')
 
@@ -41,12 +42,15 @@ def load_nltk():
     return nltk
 
 # ============================================================================
-# TEXT PREPROCESSOR CLASS
+# TEXT PREPROCESSOR CLASS (UPDATED FOR KENYAN DATASET)
 # ============================================================================
 
 class TextPreprocessor:
+    """Fast text preprocessor for Swahili/English/Sheng text"""
+    
     def __init__(self):
         self.nltk = None
+        # Custom stopwords combining English and Swahili
         self.custom_stopwords = {
             'na', 'ya', 'wa', 'ni', 'cha', 'vya', 'kwa', 'kwenye', 'katika',
             'kuwa', 'kuna', 'kutoka', 'kama', 'hii', 'hizi', 'hicho', 'ile',
@@ -58,24 +62,42 @@ class TextPreprocessor:
             'tuli', 'mli', 'wali', 'nina', 'una', 'ana', 'tuna', 'mna', 'wana',
             'nime', 'ume', 'ame', 'tume', 'mme', 'wame', 'si', 'hu', 'ki', 'vi',
             'the', 'a', 'an', 'and', 'of', 'to', 'is', 'in', 'it', 'that',
-            'for', 'on', 'with', 'as', 'by', 'at', 'from', 'or', 'but'
+            'for', 'on', 'with', 'as', 'by', 'at', 'from', 'or', 'but', 'for',
+            'of', 'with', 'without', 'after', 'before', 'up', 'down', 'into'
         }
         
+        # Sheng slang mapping (based on your dataset's Annotation Guide)
         self.sheng_map = {
-            'bie': 'nzuri', 'ngori': 'ngumu', 'kali': 'nzuri', 'poa': 'nzuri',
-            'freshi': 'nzuri', 'bora': 'nzuri', 'choma': 'mbaya', 'takataka': 'mbaya',
-            'kubaya': 'mbaya', 'kibaya': 'mbaya', 'baya': 'mbaya', 'pumbavu': 'jinga',
-            'kijinga': 'jinga', 'ujinga': 'jinga', 'fiti': 'nzuri', 'safi': 'nzuri',
-            'moto': 'nzuri', 'dah': 'sana', 'kwelikweli': 'sana', 'haki': 'kweli',
-            'jameni': 'tafadhali', 'wacha': 'acha'
+            # Positive Sheng markers
+            'bie': 'nzuri', 'kali': 'nzuri', 'poa': 'nzuri', 'freshi': 'nzuri',
+            'bora': 'nzuri', 'fiti': 'nzuri', 'safi': 'nzuri', 'moto': 'nzuri',
+            'bomba': 'nzuri', 'freshi': 'nzuri',
+            # Negative Sheng markers
+            'choma': 'mbaya', 'takataka': 'mbaya', 'kubaya': 'mbaya', 
+            'kibaya': 'mbaya', 'baya': 'mbaya', 'fala': 'mbaya',
+            'pumbavu': 'jinga', 'kijinga': 'jinga', 'ujinga': 'jinga',
+            'hawafai': 'mbaya', 'upuuzi': 'mbaya',
+            # Intensifiers
+            'dah': 'sana', 'kwelikweli': 'sana', 'haki': 'kweli',
+            'jameni': 'tafadhali', 'wacha': 'acha', 'maze': 'sana'
         }
         
+        # Negations to preserve
         self.negations = {'sio', 'si', 'haku', 'hau', 'ha', 'siwezi', 'sik', 
-                         'bila', 'kutokuwa', 'no', 'not', 'never', 'none'}
+                         'bila', 'kutokuwa', 'no', 'not', 'never', 'none',
+                         'hapana', 'hata kidogo', 'siyo'}
+    
+    def _get_nltk(self):
+        """Lazy load NLTK"""
+        if self.nltk is None:
+            self.nltk = load_nltk()
+        return self.nltk
     
     def clean_text(self, text):
+        """Clean text quickly"""
         if not isinstance(text, str):
             return ""
+        
         text = text.lower()
         text = re.sub(r'http\S+|www\S+|https\S+', '', text)
         text = re.sub(r'@\w+', '', text)
@@ -83,81 +105,140 @@ class TextPreprocessor:
         text = re.sub(r'[^a-zA-Z\s]', ' ', text)
         text = re.sub(r'\d+', '', text)
         text = re.sub(r'\s+', ' ', text).strip()
+        
         return text
     
     def handle_sheng_slang(self, text):
+        """Normalize Sheng slang using mapping dictionary"""
         words = text.split()
         normalized = [self.sheng_map.get(word, word) for word in words]
         return ' '.join(normalized)
     
     def remove_stopwords(self, text):
+        """Remove stopwords efficiently"""
         words = text.split()
         filtered = [w for w in words if w not in self.custom_stopwords or w in self.negations]
         return ' '.join(filtered)
     
     def preprocess(self, text):
+        """Complete preprocessing pipeline"""
         if not isinstance(text, str):
             return ""
+        
         text = self.clean_text(text)
         text = self.handle_sheng_slang(text)
         text = self.remove_stopwords(text)
+        
         return text
     
     def batch_preprocess(self, texts):
+        """Preprocess a batch of texts"""
         return [self.preprocess(text) for text in texts]
+
 
 # ============================================================================
 # VISUALIZATION FUNCTIONS
 # ============================================================================
 
 def create_sentiment_pie_chart(sentiment_counts):
+    """Create a pie chart for sentiment distribution"""
+    colors = {'Positive': '#2ecc71', 'Neutral': '#95a5a6', 'Negative': '#e74c3c'}
     fig = go.Figure(data=[go.Pie(
         labels=list(sentiment_counts.keys()),
         values=list(sentiment_counts.values()),
         hole=0.4,
-        marker_colors=['#2ecc71', '#e74c3c', '#95a5a6'],
+        marker_colors=[colors.get(k, '#95a5a6') for k in sentiment_counts.keys()],
         textinfo='percent+label',
         textposition='auto'
     )])
-    fig.update_layout(
-        title="Sentiment Distribution",
-        height=450,
-        showlegend=True,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)'
-    )
+    fig.update_layout(height=450, showlegend=True)
     return fig
 
 
 def create_sentiment_bar_chart(sentiment_counts):
+    """Create a bar chart for sentiment distribution"""
+    colors = {'Positive': '#2ecc71', 'Neutral': '#95a5a6', 'Negative': '#e74c3c'}
     fig = go.Figure(data=[go.Bar(
         x=list(sentiment_counts.keys()),
         y=list(sentiment_counts.values()),
-        marker_color=['#2ecc71', '#e74c3c', '#95a5a6'],
+        marker_color=[colors.get(k, '#95a5a6') for k in sentiment_counts.keys()],
         text=list(sentiment_counts.values()),
         textposition='auto'
     )])
-    fig.update_layout(
-        title="Sentiment Distribution (Bar Chart)",
-        xaxis_title="Sentiment",
-        yaxis_title="Count",
-        height=450,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)'
-    )
+    fig.update_layout(height=450, xaxis_title="Sentiment", yaxis_title="Count")
+    return fig
+
+
+def create_star_rating_chart(df):
+    """Create a bar chart for star rating distribution"""
+    if 'Star_Rating' not in df.columns:
+        return None
+    
+    rating_counts = df['Star_Rating'].value_counts().sort_index()
+    colors = ['#e74c3c', '#e74c3c', '#f39c12', '#2ecc71', '#2ecc71']
+    
+    fig = go.Figure(data=[go.Bar(
+        x=[f"{r} Star" for r in rating_counts.index],
+        y=rating_counts.values,
+        marker_color=colors[:len(rating_counts)],
+        text=rating_counts.values,
+        textposition='auto'
+    )])
+    fig.update_layout(title="Star Rating Distribution", height=400, xaxis_title="Rating", yaxis_title="Count")
+    return fig
+
+
+def create_code_switching_chart(df):
+    """Create a chart for code-switching detection"""
+    if 'Code_Switch_Detected' not in df.columns:
+        return None
+    
+    cs_counts = df['Code_Switch_Detected'].value_counts()
+    
+    fig = go.Figure(data=[go.Pie(
+        labels=cs_counts.index,
+        values=cs_counts.values,
+        hole=0.3,
+        marker_colors=['#3498db', '#95a5a6'],
+        textinfo='percent+label'
+    )])
+    fig.update_layout(title="Code-Switching Detected", height=400)
+    return fig
+
+
+def create_language_mix_chart(df):
+    """Create a chart for language mix distribution"""
+    if 'Language_Mix' not in df.columns:
+        return None
+    
+    lang_counts = df['Language_Mix'].value_counts()
+    
+    fig = go.Figure(data=[go.Bar(
+        x=lang_counts.values,
+        y=lang_counts.index,
+        orientation='h',
+        marker_color='#3498db',
+        text=lang_counts.values,
+        textposition='auto'
+    )])
+    fig.update_layout(title="Language Mix Distribution", height=400, xaxis_title="Count", yaxis_title="Language Mix")
     return fig
 
 
 def create_word_cloud(texts, title="Word Cloud"):
+    """Create word cloud - simplified"""
     if not texts:
         return None
+    
     all_text = ' '.join(texts)
+    
     wordcloud = WordCloud(
-        width=700, height=350,
+        width=600, height=350,
         background_color='white',
         colormap='viridis',
         max_words=80
     ).generate(all_text)
+    
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.imshow(wordcloud, interpolation='bilinear')
     ax.axis('off')
@@ -167,36 +248,32 @@ def create_word_cloud(texts, title="Word Cloud"):
 
 
 def create_confidence_gauge(confidence_score):
+    """Create a gauge chart"""
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=confidence_score * 100,
         title={'text': "Confidence Level"},
         gauge={
-            'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
+            'axis': {'range': [0, 100]},
             'bar': {'color': "#2c3e50"},
-            'bgcolor': "white",
-            'borderwidth': 2,
-            'bordercolor': "gray",
             'steps': [
                 {'range': [0, 50], 'color': '#f8d7da'},
                 {'range': [50, 75], 'color': '#fff3cd'},
                 {'range': [75, 100], 'color': '#d4edda'}
-            ],
-            'threshold': {
-                'line': {'color': "red", 'width': 4},
-                'thickness': 0.75,
-                'value': 90
-            }
+            ]
         }
     ))
-    fig.update_layout(height=280, paper_bgcolor='rgba(0,0,0,0)')
+    fig.update_layout(height=280)
     return fig
 
 
 def create_model_comparison_chart(model_scores):
+    """Create model comparison chart"""
     metrics = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
+    
     fig = go.Figure()
     colors = ['#3498db', '#e74c3c']
+    
     for i, (model_name, scores) in enumerate(model_scores.items()):
         fig.add_trace(go.Bar(
             name=model_name,
@@ -206,19 +283,20 @@ def create_model_comparison_chart(model_scores):
             textposition='auto',
             marker_color=colors[i % len(colors)]
         ))
+    
     fig.update_layout(
         title="Model Performance Comparison",
         barmode='group',
         height=450,
-        yaxis_range=[0, 1],
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)'
+        yaxis_range=[0, 1]
     )
     return fig
 
 
 def create_top_words_chart(word_frequencies, title="Most Frequent Words", top_n=12):
+    """Create top words chart"""
     top_words = dict(sorted(word_frequencies.items(), key=lambda x: x[1], reverse=True)[:top_n])
+    
     fig = go.Figure(data=[go.Bar(
         x=list(top_words.values()),
         y=list(top_words.keys()),
@@ -227,13 +305,61 @@ def create_top_words_chart(word_frequencies, title="Most Frequent Words", top_n=
         text=list(top_words.values()),
         textposition='outside'
     )])
+    fig.update_layout(title=title, height=450, yaxis={'categoryorder': 'total ascending'})
+    return fig
+
+
+def create_sentiment_by_platform_chart(df):
+    """Create a stacked bar chart for sentiment by platform"""
+    if 'Platform' not in df.columns:
+        return None
+    
+    platform_sentiment = pd.crosstab(df['Platform'], df['Sentiment_Label'], normalize='index') * 100
+    
+    fig = go.Figure()
+    for sentiment in platform_sentiment.columns:
+        fig.add_trace(go.Bar(
+            name=sentiment,
+            x=platform_sentiment.index,
+            y=platform_sentiment[sentiment],
+            marker_color={'Positive': '#2ecc71', 'Neutral': '#95a5a6', 'Negative': '#e74c3c'}.get(sentiment, '#95a5a6')
+        ))
+    
     fig.update_layout(
-        title=title,
-        xaxis_title="Frequency",
-        yaxis_title="Word",
-        height=500,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)'
+        title="Sentiment Distribution by Platform (%)",
+        barmode='stack',
+        height=450,
+        xaxis_title="Platform",
+        yaxis_title="Percentage (%)"
+    )
+    return fig
+
+
+def create_sentiment_by_retailer_chart(df, top_n=8):
+    """Create a horizontal bar chart for sentiment by retailer"""
+    if 'Retailer' not in df.columns:
+        return None
+    
+    retailer_sentiment = df.groupby('Retailer')['Sentiment_Label'].value_counts(normalize=True).unstack().fillna(0) * 100
+    retailer_sentiment = retailer_sentiment.loc[retailer_sentiment.sum(axis=1).nlargest(top_n).index]
+    
+    fig = go.Figure()
+    for sentiment in ['Positive', 'Neutral', 'Negative']:
+        if sentiment in retailer_sentiment.columns:
+            fig.add_trace(go.Bar(
+                name=sentiment,
+                y=retailer_sentiment.index,
+                x=retailer_sentiment[sentiment],
+                orientation='h',
+                marker_color={'Positive': '#2ecc71', 'Neutral': '#95a5a6', 'Negative': '#e74c3c'}.get(sentiment, '#95a5a6')
+            ))
+    
+    fig.update_layout(
+        title=f"Sentiment Distribution by Retailer (Top {top_n})",
+        barmode='stack',
+        height=450,
+        xaxis_title="Percentage (%)",
+        yaxis_title="Retailer"
     )
     return fig
 
@@ -243,129 +369,63 @@ def create_top_words_chart(word_frequencies, title="Most Frequent Words", top_n=
 # ============================================================================
 
 st.set_page_config(
-    page_title="Sentiment Analysis System",
+    page_title="Kenyan Retail Sentiment Analysis",
     page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# Custom CSS with visible metric cards
+# Custom CSS
 st.markdown("""
 <style>
-    /* Main header */
     .main-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 2rem;
-        border-radius: 15px;
-        margin-bottom: 2rem;
+        background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+        padding: 1.5rem;
+        border-radius: 10px;
+        margin-bottom: 1.5rem;
         color: white;
         text-align: center;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
-    .main-header h1 {
-        margin: 0;
-        font-size: 2.2rem;
-    }
-    .main-header h3 {
-        margin: 0.5rem 0;
-        font-size: 1.2rem;
-    }
-    
-    /* Metric Cards - VISIBLE */
-    .metric-card {
-        background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-        padding: 1.5rem;
-        border-radius: 15px;
-        text-align: center;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        border: 1px solid #e0e0e0;
-        margin: 0.5rem;
-    }
-    .metric-card h3 {
-        color: #6c757d;
-        font-size: 1rem;
-        margin-bottom: 0.5rem;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    .metric-card h2 {
-        color: #2c3e50;
-        font-size: 2.5rem;
-        margin: 0;
-        font-weight: bold;
-    }
-    .metric-card-total h2 { color: #3498db; }
-    .metric-card-positive h2 { color: #27ae60; }
-    .metric-card-negative h2 { color: #e74c3c; }
-    
-    /* Sentiment boxes */
     .sentiment-positive {
-        background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+        background-color: #d4edda;
         color: #155724;
         padding: 1rem;
         border-radius: 10px;
         text-align: center;
         border-left: 5px solid #28a745;
-        margin: 0.5rem 0;
-    }
-    .sentiment-negative {
-        background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
-        color: #721c24;
-        padding: 1rem;
-        border-radius: 10px;
-        text-align: center;
-        border-left: 5px solid #dc3545;
-        margin: 0.5rem 0;
     }
     .sentiment-neutral {
-        background: linear-gradient(135deg, #e2e3e5 0%, #d6d8db 100%);
+        background-color: #e2e3e5;
         color: #383d41;
         padding: 1rem;
         border-radius: 10px;
         text-align: center;
         border-left: 5px solid #6c757d;
-        margin: 0.5rem 0;
     }
-    
-    /* Sidebar */
-    .css-1d391kg, [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #2c3e50 0%, #1a252f 100%);
-    }
-    [data-testid="stSidebar"] * {
-        color: white;
-    }
-    [data-testid="stSidebar"] .stSelectbox label {
-        color: white;
-    }
-    
-    /* Buttons */
-    .stButton > button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        padding: 0.6rem 2rem;
-        border-radius: 30px;
-        font-weight: bold;
-        transition: all 0.3s ease;
-    }
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(102,126,234,0.4);
-    }
-    
-    /* Main content background */
-    .main > div {
-        background-color: #f0f2f6;
-    }
-    
-    /* Headers */
-    h1, h2, h3, h4 {
-        color: #2c3e50;
-    }
-    
-    /* Info boxes */
-    .stAlert {
+    .sentiment-negative {
+        background-color: #f8d7da;
+        color: #721c24;
+        padding: 1rem;
         border-radius: 10px;
+        text-align: center;
+        border-left: 5px solid #dc3545;
+    }
+    .metric-card {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 10px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        border: 1px solid #e0e0e0;
+    }
+    .metric-card h3 {
+        color: #6c757d;
+        font-size: 0.9rem;
+        margin-bottom: 0.5rem;
+    }
+    .metric-card h2 {
+        color: #2c3e50;
+        font-size: 2rem;
+        margin: 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -385,42 +445,26 @@ if 'df' not in st.session_state:
 # Header
 st.markdown("""
 <div class="main-header">
-    <h1> Automated Text Mining Solution</h1>
-    <h3>Real-Time Sentiment Analysis for Customer Feedback</h3>
-    <p style="margin-top: 0.5rem; opacity: 0.9;">Supporting English, Swahili, and Sheng code-switching</p>
+    <h1> Kenyan Retail Sentiment Analysis System</h1>
+    <h3>Automated Text Mining for Real-Time Customer Feedback Analysis</h3>
+    <p>Supporting English, Swahili, and Sheng code-switching</p>
 </div>
 """, unsafe_allow_html=True)
 
 # Sidebar
 with st.sidebar:
-    st.markdown("# Navigation")
-    page = st.radio(
-        "Select Page",
-        [" Dashboard", " Model Training", " Real-Time Analysis", " Analytics", " About"],
-        format_func=lambda x: x.strip()
-    )
+    st.title("Navigation")
+    page = st.radio("Select Page", ["Dashboard", "Model Training", "Real-Time Analysis", "Analytics", "Dataset Explorer", "About"])
     
     st.markdown("---")
-    st.markdown("### Dataset Status")
     if st.session_state.data_loaded:
-        st.success(f"✓ Loaded: {len(st.session_state.df)} records")
-        if 'labels' in st.session_state.df.columns:
-            pos = len(st.session_state.df[st.session_state.df['labels'] == 'positive'])
-            neg = len(st.session_state.df[st.session_state.df['labels'] == 'negative'])
-            st.metric("Positive", pos, delta=None)
-            st.metric("Negative", neg, delta=None)
+        st.success(f"Data: {len(st.session_state.df)} records")
     else:
         st.info("No data loaded")
     
     st.markdown("---")
-    st.markdown("### Team Members")
-    st.markdown("""
-    - Timothy Joseph
-    - Mukiri Sharon
-    - Caleb Ngumbau
-    - Osama Mohammed
-    - Monicah Gitahi
-    """)
+    st.markdown("**Team:**")
+    st.markdown("- Timothy Joseph\n- Mukiri Sharon\n- Caleb Ngumbau\n- Osama Mohammed\n- Monicah Gitahi")
     st.markdown("---")
     st.markdown("**Supervisor:** Mr. Vincent Mwai")
     st.markdown("**JKUAT - 2026**")
@@ -429,147 +473,182 @@ with st.sidebar:
 # DASHBOARD PAGE
 # ============================================================================
 
-if page == " Dashboard":
+if page == "Dashboard":
     st.header("Dashboard Overview")
     
     if st.session_state.data_loaded:
-        # Metrics Row - Visible Cards
-        col1, col2, col3 = st.columns(3)
+        df = st.session_state.df
         
-        total = len(st.session_state.df)
-        pos_count = len(st.session_state.df[st.session_state.df['labels'] == 'positive'])
-        neg_count = len(st.session_state.df[st.session_state.df['labels'] == 'negative'])
-        pos_pct = (pos_count / total * 100) if total > 0 else 0
-        neg_pct = (neg_count / total * 100) if total > 0 else 0
+        # Metrics Row
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             st.markdown(f"""
             <div class="metric-card">
                 <h3>Total Reviews</h3>
-                <h2>{total}</h2>
-                <p style="color: #6c757d; margin-top: 0.5rem;">100%</p>
+                <h2>{len(df)}</h2>
             </div>
             """, unsafe_allow_html=True)
         
         with col2:
+            pos_count = len(df[df['Sentiment_Label'] == 'Positive'])
             st.markdown(f"""
             <div class="metric-card">
-                <h3>Positive Reviews</h3>
+                <h3>Positive</h3>
                 <h2 style="color: #27ae60;">{pos_count}</h2>
-                <p style="color: #27ae60;">{pos_pct:.1f}%</p>
             </div>
             """, unsafe_allow_html=True)
         
         with col3:
+            neu_count = len(df[df['Sentiment_Label'] == 'Neutral'])
             st.markdown(f"""
             <div class="metric-card">
-                <h3>Negative Reviews</h3>
+                <h3>Neutral</h3>
+                <h2 style="color: #7f8c8d;">{neu_count}</h2>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            neg_count = len(df[df['Sentiment_Label'] == 'Negative'])
+            st.markdown(f"""
+            <div class="metric-card">
+                <h3>Negative</h3>
                 <h2 style="color: #e74c3c;">{neg_count}</h2>
-                <p style="color: #e74c3c;">{neg_pct:.1f}%</p>
             </div>
             """, unsafe_allow_html=True)
         
         st.markdown("---")
         
-        # Charts Row
+        # Charts Row 1
         col1, col2 = st.columns(2)
         
-        sentiment_counts = st.session_state.df['labels'].value_counts().to_dict()
-        
         with col1:
-            fig_pie = create_sentiment_pie_chart(sentiment_counts)
-            st.plotly_chart(fig_pie, use_container_width=True)
+            sentiment_counts = df['Sentiment_Label'].value_counts().to_dict()
+            st.plotly_chart(create_sentiment_pie_chart(sentiment_counts), use_container_width=True)
         
         with col2:
-            fig_bar = create_sentiment_bar_chart(sentiment_counts)
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(create_sentiment_bar_chart(sentiment_counts), use_container_width=True)
+        
+        # Charts Row 2
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            star_chart = create_star_rating_chart(df)
+            if star_chart:
+                st.plotly_chart(star_chart, use_container_width=True)
+        
+        with col2:
+            cs_chart = create_code_switching_chart(df)
+            if cs_chart:
+                st.plotly_chart(cs_chart, use_container_width=True)
+        
+        # Charts Row 3
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            lang_chart = create_language_mix_chart(df)
+            if lang_chart:
+                st.plotly_chart(lang_chart, use_container_width=True)
+        
+        with col2:
+            platform_chart = create_sentiment_by_platform_chart(df)
+            if platform_chart:
+                st.plotly_chart(platform_chart, use_container_width=True)
         
         # Sample Reviews
         st.markdown("### Sample Customer Reviews")
         
-        # Add filter for sample reviews
-        filter_option = st.selectbox("Filter by sentiment:", ["All", "Positive", "Negative"])
+        filter_option = st.selectbox("Filter by sentiment:", ["All", "Positive", "Neutral", "Negative"])
         
         if filter_option == "Positive":
-            sample_df = st.session_state.df[st.session_state.df['labels'] == 'positive'].head(10)
+            sample_df = df[df['Sentiment_Label'] == 'Positive'].head(10)
         elif filter_option == "Negative":
-            sample_df = st.session_state.df[st.session_state.df['labels'] == 'negative'].head(10)
+            sample_df = df[df['Sentiment_Label'] == 'Negative'].head(10)
+        elif filter_option == "Neutral":
+            sample_df = df[df['Sentiment_Label'] == 'Neutral'].head(10)
         else:
-            sample_df = st.session_state.df.head(10)
+            sample_df = df.head(10)
         
-        for idx, row in sample_df.iterrows():
-            if row['labels'] == 'positive':
+        for _, row in sample_df.iterrows():
+            sentiment = row['Sentiment_Label']
+            if sentiment == 'Positive':
                 st.markdown(f"""
                 <div class="sentiment-positive">
                     <strong>POSITIVE</strong><br>
-                    {row['text'][:250]}...
+                    {row['Review_Text'][:250]}...
+                </div>
+                """, unsafe_allow_html=True)
+            elif sentiment == 'Negative':
+                st.markdown(f"""
+                <div class="sentiment-negative">
+                    <strong>NEGATIVE</strong><br>
+                    {row['Review_Text'][:250]}...
                 </div>
                 """, unsafe_allow_html=True)
             else:
                 st.markdown(f"""
-                <div class="sentiment-negative">
-                    <strong>NEGATIVE</strong><br>
-                    {row['text'][:250]}...
+                <div class="sentiment-neutral">
+                    <strong>NEUTRAL</strong><br>
+                    {row['Review_Text'][:250]}...
                 </div>
                 """, unsafe_allow_html=True)
     else:
-        st.info("📁 No data loaded. Please go to **Model Training** page to upload your dataset.")
-        st.markdown("""
-        ### Quick Start
-        1. Go to **Model Training** page
-        2. Upload your CSV file (must have 'text' and 'labels' columns)
-        3. Click **Train Model**
-        4. Return here to see the dashboard
-        """)
+        st.info("No data loaded. Please go to Model Training page and upload your dataset.")
 
 # ============================================================================
 # MODEL TRAINING PAGE
 # ============================================================================
 
-elif page == " Model Training":
+elif page == "Model Training":
     st.header("Model Training")
     
     st.markdown("""
-    Train machine learning models to classify customer feedback sentiment.
-    The system supports English, Swahili, and Sheng (code-switching).
+    Train machine learning models (Naive Bayes and SVM) on customer feedback data.
+    The system supports code-switching between English, Swahili, and Sheng.
     """)
     
-    uploaded_file = st.file_uploader("Upload CSV file with customer reviews", type=['csv'])
+    uploaded_file = st.file_uploader("Upload Excel or CSV file with customer reviews", type=['csv', 'xlsx'])
     
     if uploaded_file is not None:
         try:
-            df = pd.read_csv(uploaded_file)
+            if uploaded_file.name.endswith('.xlsx'):
+                df = pd.read_excel(uploaded_file, sheet_name='Raw_Dataset')
+            else:
+                df = pd.read_csv(uploaded_file)
             
-            # Clean columns
-            if 'Unnamed: 0' in df.columns:
-                df = df.drop(columns=['Unnamed: 0'])
-            
-            if 'labels' in df.columns:
-                label_map = {'positive': 1, 'negative': 0}
-                df['label_encoded'] = df['labels'].map(label_map)
-                df = df.dropna(subset=['label_encoded'])
-                df['label_encoded'] = df['label_encoded'].astype(int)
+            # Check for required columns
+            if 'Review_Text' in df.columns and 'Sentiment_Label' in df.columns:
                 
-                st.session_state.df = df
+                # Keep only relevant columns and drop nulls
+                df = df[['Review_Text', 'Sentiment_Label']].dropna()
+                
+                # Map sentiment labels to numeric (for binary classification, we'll focus on Positive vs Negative)
+                # For Neutral, we'll handle separately
+                df_binary = df[df['Sentiment_Label'].isin(['Positive', 'Negative'])].copy()
+                label_map = {'Positive': 1, 'Negative': 0}
+                df_binary['label_encoded'] = df_binary['Sentiment_Label'].map(label_map)
+                
+                st.session_state.df = df_binary
                 st.session_state.data_loaded = True
                 
-                st.success(f"✅ Successfully loaded {len(df)} reviews!")
+                st.success(f"Successfully loaded {len(df_binary)} reviews (Positive + Negative)!")
+                st.write(f"Note: {len(df) - len(df_binary)} neutral reviews excluded from training (kept for analysis only)")
                 
                 # Show preview
                 st.subheader("Data Preview")
-                st.dataframe(df[['text', 'labels']].head(10), use_container_width=True)
+                st.dataframe(df_binary[['Review_Text', 'Sentiment_Label']].head(10), use_container_width=True)
                 
                 # Show statistics
                 st.subheader("Dataset Statistics")
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Total Reviews", len(df))
+                    st.metric("Total (Binary)", len(df_binary))
                 with col2:
-                    st.metric("Positive Reviews", len(df[df['labels'] == 'positive']))
-                with col1:
-                    st.metric("Negative Reviews", len(df[df['labels'] == 'negative']))
+                    st.metric("Positive", len(df_binary[df_binary['Sentiment_Label'] == 'Positive']))
+                with col3:
+                    st.metric("Negative", len(df_binary[df_binary['Sentiment_Label'] == 'Negative']))
             else:
-                st.error("CSV file must contain a 'labels' column with 'positive' or 'negative' values")
+                st.error("Excel file must contain 'Review_Text' and 'Sentiment_Label' columns")
                 
         except Exception as e:
             st.error(f"Error loading file: {str(e)}")
@@ -584,34 +663,29 @@ elif page == " Model Training":
         with col2:
             test_size = st.slider("Test Set Size (%)", 10, 40, 20) / 100
         
-        if st.button("🚀 Train Model", use_container_width=True):
+        if st.button("Train Model", use_container_width=True):
             with st.spinner("Training model... Please wait."):
                 
-                # Initialize preprocessor
                 if st.session_state.preprocessor is None:
                     st.session_state.preprocessor = TextPreprocessor()
                 
                 preprocessor = st.session_state.preprocessor
-                texts = st.session_state.df['text'].astype(str).tolist()
+                texts = st.session_state.df['Review_Text'].astype(str).tolist()
                 
-                # Preprocess
                 with st.spinner("Preprocessing text..."):
                     processed_texts = preprocessor.batch_preprocess(texts)
                 
-                # Vectorize
                 with st.spinner("Vectorizing text..."):
                     vectorizer = TfidfVectorizer(max_features=3000, ngram_range=(1, 2))
                     X = vectorizer.fit_transform(processed_texts)
                     y = st.session_state.df['label_encoded'].values
                 
-                # Split
                 X_train, X_test, y_train, y_test = train_test_split(
                     X, y, test_size=test_size, random_state=42
                 )
                 
                 results = {}
                 
-                # Train Naive Bayes
                 if model_type in ["Naive Bayes", "Both"]:
                     with st.spinner("Training Naive Bayes..."):
                         nb = MultinomialNB()
@@ -625,7 +699,6 @@ elif page == " Model Training":
                             'model': nb
                         }
                 
-                # Train SVM
                 if model_type in ["SVM", "Both"]:
                     with st.spinner("Training SVM..."):
                         svm = SVC(kernel='linear', probability=True, random_state=42)
@@ -639,26 +712,20 @@ elif page == " Model Training":
                             'model': svm
                         }
                 
-                # Save best model
                 best_model = max(results, key=lambda x: results[x]['accuracy'])
                 st.session_state.model = results[best_model]['model']
                 st.session_state.vectorizer = vectorizer
                 
-                # Save to disk
                 joblib.dump(st.session_state.model, 'sentiment_model.pkl')
                 joblib.dump(st.session_state.vectorizer, 'vectorizer.pkl')
                 
-                st.success(f"✅ Training complete! Best model: **{best_model}**")
+                st.success(f"Training complete! Best model: {best_model}")
                 st.metric("Accuracy", f"{results[best_model]['accuracy']:.4f}")
-                
-                # Show results
-                st.subheader("Model Performance")
                 
                 model_scores = {name: {k: v for k, v in m.items() if k != 'model'} 
                                for name, m in results.items()}
                 st.plotly_chart(create_model_comparison_chart(model_scores), use_container_width=True)
                 
-                # Detailed metrics
                 st.subheader("Detailed Metrics")
                 for name, m in results.items():
                     col1, col2, col3, col4 = st.columns(4)
@@ -675,19 +742,21 @@ elif page == " Model Training":
 # REAL-TIME ANALYSIS PAGE
 # ============================================================================
 
-elif page == " Real-Time Analysis":
+elif page == "Real-Time Analysis":
     st.header("Real-Time Sentiment Analysis")
     
-    st.markdown("Enter customer feedback below to analyze its sentiment in real-time.")
+    st.markdown("""
+    Enter customer feedback below to analyze its sentiment in real-time.
+    The system supports English, Swahili, and Sheng (code-switching).
+    """)
     
-    # Example buttons
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("📝 Load Positive Example", use_container_width=True):
-            st.session_state.example_text = "Bidhaa hii ni nzuri sana, nimefurahishwa na huduma yenu"
+        if st.button("Load Positive Example", use_container_width=True):
+            st.session_state.example_text = "Bidhaa hii ni kali sana, nimefurahishwa na huduma yenu. Delivery ilikuwa bomba!"
     with col2:
-        if st.button("📝 Load Negative Example", use_container_width=True):
-            st.session_state.example_text = "Bidhaa hii ni mbaya sana, sijafurahishwa kabisa"
+        if st.button("Load Negative Example", use_container_width=True):
+            st.session_state.example_text = "Walinidanganya. Product quality ni mbaya na nobody is responding to my complaint. Hawafai!"
     
     user_input = st.text_area(
         "Customer Feedback:",
@@ -696,7 +765,7 @@ elif page == " Real-Time Analysis":
         placeholder="Example: Bidhaa hii ni nzuri sana, nitaipenda..."
     )
     
-    if st.button("🔍 Analyze Sentiment", use_container_width=True):
+    if st.button("Analyze Sentiment", use_container_width=True):
         if user_input:
             if st.session_state.model is not None and st.session_state.vectorizer is not None:
                 with st.spinner("Analyzing..."):
@@ -712,7 +781,7 @@ elif page == " Real-Time Analysis":
                     else:
                         confidence = 0.85
                     
-                    sentiment = "positive" if prediction == 1 else "negative"
+                    sentiment = "Positive" if prediction == 1 else "Negative"
                     
                     st.markdown("---")
                     st.subheader("Analysis Result")
@@ -720,17 +789,17 @@ elif page == " Real-Time Analysis":
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        if sentiment == "positive":
+                        if sentiment == "Positive":
                             st.markdown("""
                             <div class="sentiment-positive" style="padding: 2rem;">
-                                <h2 style="margin: 0;">😊 POSITIVE</h2>
+                                <h2 style="margin: 0;">POSITIVE SENTIMENT</h2>
                                 <p style="margin-top: 0.5rem;">The customer expressed satisfaction with the product or service.</p>
                             </div>
                             """, unsafe_allow_html=True)
                         else:
                             st.markdown("""
                             <div class="sentiment-negative" style="padding: 2rem;">
-                                <h2 style="margin: 0;">😞 NEGATIVE</h2>
+                                <h2 style="margin: 0;">NEGATIVE SENTIMENT</h2>
                                 <p style="margin-top: 0.5rem;">The customer expressed dissatisfaction with the product or service.</p>
                             </div>
                             """, unsafe_allow_html=True)
@@ -744,7 +813,7 @@ elif page == " Real-Time Analysis":
                         st.write("**Preprocessed Text:**", processed)
                         st.write("**Prediction Confidence:**", f"{confidence:.2%}")
             else:
-                st.error("⚠️ No trained model found. Please go to Model Training page and train a model first.")
+                st.error("No trained model found. Please go to Model Training page and train a model first.")
         else:
             st.warning("Please enter some text to analyze.")
 
@@ -752,19 +821,19 @@ elif page == " Real-Time Analysis":
 # ANALYTICS PAGE
 # ============================================================================
 
-elif page == " Analytics":
+elif page == "Analytics":
     st.header("Advanced Analytics")
     
     if st.session_state.data_loaded:
-        # Word Clouds
+        df = st.session_state.df
+        
         st.subheader("Word Cloud Analysis")
-        st.markdown("Visualizing the most common words in positive and negative reviews.")
         
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown("#### Positive Reviews")
-            pos_texts = st.session_state.df[st.session_state.df['labels'] == 'positive']['text'].tolist()
+            pos_texts = df[df['Sentiment_Label'] == 'Positive']['Review_Text'].tolist()
             if pos_texts:
                 fig = create_word_cloud(pos_texts, "Positive Reviews Word Cloud")
                 if fig:
@@ -774,7 +843,7 @@ elif page == " Analytics":
         
         with col2:
             st.markdown("#### Negative Reviews")
-            neg_texts = st.session_state.df[st.session_state.df['labels'] == 'negative']['text'].tolist()
+            neg_texts = df[df['Sentiment_Label'] == 'Negative']['Review_Text'].tolist()
             if neg_texts:
                 fig = create_word_cloud(neg_texts, "Negative Reviews Word Cloud")
                 if fig:
@@ -782,13 +851,12 @@ elif page == " Analytics":
             else:
                 st.info("No negative reviews found")
         
-        # Most Frequent Words
         st.subheader("Most Frequent Words Analysis")
         
         if st.session_state.preprocessor is None:
             st.session_state.preprocessor = TextPreprocessor()
         
-        all_texts = st.session_state.df['text'].astype(str).tolist()
+        all_texts = df['Review_Text'].astype(str).tolist()
         processed = st.session_state.preprocessor.batch_preprocess(all_texts)
         all_words = ' '.join(processed).split()
         word_freq = Counter(all_words)
@@ -796,19 +864,24 @@ elif page == " Analytics":
         fig_top = create_top_words_chart(word_freq, "Most Frequent Words Across All Reviews")
         st.plotly_chart(fig_top, use_container_width=True)
         
-        # Export Report
+        st.subheader("Sentiment by Retailer")
+        retailer_chart = create_sentiment_by_retailer_chart(df)
+        if retailer_chart:
+            st.plotly_chart(retailer_chart, use_container_width=True)
+        
         st.markdown("---")
         st.subheader("Export Analysis Report")
         
-        if st.button("📥 Generate Report", use_container_width=True):
-            total = len(st.session_state.df)
-            pos = len(st.session_state.df[st.session_state.df['labels'] == 'positive'])
-            neg = len(st.session_state.df[st.session_state.df['labels'] == 'negative'])
+        if st.button("Generate Report", use_container_width=True):
+            total = len(df)
+            pos = len(df[df['Sentiment_Label'] == 'Positive'])
+            neu = len(df[df['Sentiment_Label'] == 'Neutral']) if 'Neutral' in df['Sentiment_Label'].values else 0
+            neg = len(df[df['Sentiment_Label'] == 'Negative'])
             
             report_data = {
-                'metric': ['Total Reviews', 'Positive Reviews', 'Negative Reviews', 
+                'metric': ['Total Reviews', 'Positive Reviews', 'Neutral Reviews', 'Negative Reviews', 
                           'Positive Percentage', 'Negative Percentage'],
-                'value': [total, pos, neg, f"{(pos/total*100):.1f}%", f"{(neg/total*100):.1f}%"]
+                'value': [total, pos, neu, neg, f"{(pos/total*100):.1f}%", f"{(neg/total*100):.1f}%"]
             }
             
             report_df = pd.DataFrame(report_data)
@@ -821,7 +894,60 @@ elif page == " Analytics":
                 mime="text/csv"
             )
     else:
-        st.info("📁 No data loaded. Please go to Model Training page to load and analyze data.")
+        st.info("No data loaded. Please go to Model Training page to load and analyze data.")
+
+# ============================================================================
+# DATASET EXPLORER PAGE
+# ============================================================================
+
+elif page == "Dataset Explorer":
+    st.header("Dataset Explorer")
+    
+    if st.session_state.data_loaded:
+        df_full = pd.read_excel('KE_Retail_Sentiment_Dataset.xlsx', sheet_name='Raw_Dataset') if st.session_state.df is not None else None
+        
+        if df_full is not None:
+            st.subheader("Full Dataset Overview")
+            st.dataframe(df_full.head(20), use_container_width=True)
+            
+            st.subheader("Dataset Summary Statistics")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Top Retailers by Review Count**")
+                retailer_counts = df_full['Retailer'].value_counts().head(10)
+                st.bar_chart(retailer_counts)
+            
+            with col2:
+                st.write("**Top Product Categories**")
+                category_counts = df_full['Product_Category'].value_counts().head(10)
+                st.bar_chart(category_counts)
+            
+            st.subheader("Filter Reviews")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                retailer_filter = st.selectbox("Select Retailer", ["All"] + list(df_full['Retailer'].unique()))
+            with col2:
+                sentiment_filter = st.selectbox("Select Sentiment", ["All", "Positive", "Neutral", "Negative"])
+            with col3:
+                lang_filter = st.selectbox("Select Language Mix", ["All"] + list(df_full['Language_Mix'].unique()))
+            
+            filtered_df = df_full.copy()
+            if retailer_filter != "All":
+                filtered_df = filtered_df[filtered_df['Retailer'] == retailer_filter]
+            if sentiment_filter != "All":
+                filtered_df = filtered_df[filtered_df['Sentiment_Label'] == sentiment_filter]
+            if lang_filter != "All":
+                filtered_df = filtered_df[filtered_df['Language_Mix'] == lang_filter]
+            
+            st.write(f"Showing {len(filtered_df)} reviews")
+            st.dataframe(filtered_df[['Review_ID', 'Review_Date', 'Retailer', 'Product_Category', 'Star_Rating', 'Sentiment_Label', 'Language_Mix', 'Review_Text']].head(20), use_container_width=True)
+        else:
+            st.info("Full dataset not available. Please ensure the Excel file is accessible.")
+    else:
+        st.info("No data loaded. Please go to Model Training page first.")
 
 # ============================================================================
 # ABOUT PAGE
@@ -839,36 +965,41 @@ else:
     
     ---
     
-    ### Problem Statement
+    ### Dataset Information
     
-    Retailers face significant challenges in manually analyzing large volumes of customer feedback.
-    Existing automated tools fail to interpret the linguistic nuances of the Kenyan market,
-    where code-switching and Sheng are common.
+    The **Kenyan Retail Sentiment Dataset** contains 2,000 customer reviews collected from major
+    Kenyan e-commerce platforms including:
+    
+    - Jumia
+    - Kilimall
+    - Masoko
+    - Copia
+    - Sky.Garden
+    - Naivas Digital
+    - Pigiame
+    - Tuskys Online
+    - Flare
+    - Jiji
+    
+    Each review includes:
+    - Review text (English, Swahili, Sheng)
+    - Sentiment label (Positive, Neutral, Negative)
+    - Star rating (1-5)
+    - Platform and retailer information
+    - Language mix and code-switching detection
     
     ---
     
-    ### Objectives
+    ### Methodology (DSR - Design Science Research)
     
-    | # | Objective |
-    |---|-----------|
-    | 1 | Curate, preprocess, and label a comprehensive dataset of retail customer feedback |
-    | 2 | Engineer and select linguistic features for sentiment analysis |
-    | 3 | Train and optimize multiple machine learning classification models |
-    | 4 | Develop a functional web-based application |
-    | 5 | Validate the system's performance and business utility |
+    The project follows the Design Science Research methodology:
     
-    ---
-    
-    ### Methodology (CRISP-DM)
-    
-    The project follows the Cross-Industry Standard Process for Data Mining:
-    
-    - **Business Understanding** - Define project objectives
-    - **Data Understanding** - Collect and explore data
-    - **Data Preparation** - Clean and transform data
-    - **Modeling** - Train ML models (Naive Bayes, SVM)
-    - **Evaluation** - Assess model performance
-    - **Deployment** - Deploy web application
+    - **Problem Identification** - Manual feedback analysis; code-switching challenges
+    - **Define Objectives** - Three specific objectives (preprocessing, training, deployment)
+    - **Design & Development** - Build preprocessing pipeline, train models, develop web app
+    - **Demonstration** - Run the application with the Kenyan dataset
+    - **Evaluation** - Accuracy, precision, recall, F1-score
+    - **Communication** - This document and application deployment
     
     ---
     
@@ -878,7 +1009,7 @@ else:
     |------------|---------|
     | Python 3.10+ | Core programming language |
     | Streamlit | Web application framework |
-    | Scikit-learn | Machine learning algorithms |
+    | Scikit-learn | Machine learning algorithms (Naive Bayes, SVM) |
     | NLTK | Natural language processing |
     | Pandas | Data manipulation |
     | Plotly/Matplotlib | Data visualization |
@@ -917,13 +1048,14 @@ else:
         st.markdown("---")
         st.subheader("Current Dataset Statistics")
         
-        total = len(st.session_state.df)
-        pos = len(st.session_state.df[st.session_state.df['labels'] == 'positive'])
-        neg = len(st.session_state.df[st.session_state.df['labels'] == 'negative'])
+        df = st.session_state.df
+        total = len(df)
+        pos = len(df[df['Sentiment_Label'] == 'Positive'])
+        neg = len(df[df['Sentiment_Label'] == 'Negative'])
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Records", total)
+            st.metric("Total Records (Binary)", total)
         with col2:
             st.metric("Positive Reviews", pos)
         with col3:
@@ -933,7 +1065,7 @@ else:
 st.markdown("---")
 st.markdown(
     "<div style='text-align: center; color: #6c757d; padding: 1rem;'>"
-    "© 2026 - Automated Text Mining Solution for Real-Time Sentiment Analysis | JKUAT"
+    "(c) 2026 - Kenyan Retail Sentiment Analysis System | JKUAT"
     "</div>",
     unsafe_allow_html=True
 )
